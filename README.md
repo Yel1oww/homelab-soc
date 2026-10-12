@@ -19,7 +19,7 @@ flowchart LR
         M["10 mini PCs<br/>9x Orange Pi Zero 3 + 1x Raspberry Pi 4<br/>Ubuntu + DietPi"]
         V["Cloud VPS (Ubuntu)"]
         W["Windows desktop"]
-        L["Arch-based laptops"]
+        L["Arch-based laptop"]
     end
     M -- "Wazuh agent 1514/1515 only" --> X
     V -- "Wazuh agent 1514/1515 only" --> X
