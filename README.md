@@ -1,4 +1,4 @@
-# Homelab SOC: Wazuh SIEM + OpenVAS for an ARM mini-PC fleet
+# Homelab SOC: Wazuh SIEM + OpenVAS for an ARM mini-PC fleet, Cloud VPS and Desktops.
 
 Security monitoring for a small fleet of always-on ARM single-board computers (**9 Orange Pi Zero 3 and 1 Raspberry Pi 4**), a home server, desktops and a cloud VPS, all connected over **Tailscale**.
 
