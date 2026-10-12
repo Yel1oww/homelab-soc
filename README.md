@@ -19,12 +19,14 @@ flowchart LR
         M["10 mini PCs<br/>9x Orange Pi Zero 3 + 1x Raspberry Pi 4<br/>Ubuntu + DietPi"]
         V["Cloud VPS (Ubuntu)"]
         W["Windows desktop"]
-        L["Arch-based laptop"]
+        L["Arch-based laptops"]
     end
     M -- "Wazuh agent 1514/1515 only" --> X
     V -- "Wazuh agent 1514/1515 only" --> X
     W -- agent --> X
     L -- agent --> X
+    X -- "OpenVAS fleet audit (Tailscale IPs)" --> M
+    X -- "OpenVAS fleet audit" --> V
     X -. "Weekly OpenVAS scan of the PUBLIC IP<br/>(over the internet)" .-> V
 ```
 
