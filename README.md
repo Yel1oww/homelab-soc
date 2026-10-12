@@ -124,6 +124,8 @@ While restricting agent traffic, I found that a rule granting `autogroup:member`
 
 Scans use "Full and fast" across all TCP ports plus the top 100 UDP ports.
 
+The full reports are in [`reports/`](reports/), redacted: IP addresses are replaced with host labels (`mini-01`…`mini-10`, `mini-casa`, `vps`, `vps-public`), the VPS domain is removed, and the Pi-hole `.git` log excerpt is blacked out.
+
 | Scan | Targets | Viewpoint | Frequency |
 |---|---|---|---|
 | Fleet audit | 10 boards + VPS, Tailscale IPs | What any device on the tailnet can reach | One-off (2 Oct 2026) |
