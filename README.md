@@ -146,7 +146,7 @@ Report filter: QoD ≥ 70, log-level results hidden.
 | **Weak SSH MAC algorithms** `umac-64-etm@openssh.com`, `umac-64@openssh.com` (VPS) | Low (CVSS 2.6) | 64-bit integrity tags | ✅ Fixed: only strong MACs allowed |
 | **TCP / ICMP timestamps** (all hosts) | Low (CVSS 2.1–2.6) | Remote uptime / clock estimation | ✅ Fixed |
 
-Nothing else turned up over Tailscale. The earning-app ports, node exporter and SSH on the boards produced no findings above Low.
+Nothing else turned up over Tailscale. The services and SSH on the boards produced no findings above Low.
 
 ### VPS public IP, internet side (weekly)
 
