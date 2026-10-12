@@ -100,14 +100,7 @@ Behavioural indicators: a user-space process with cmdline `[rcu_gp]` and a reada
 No public match was found for the main hash at the time of writing.
 
 ### Remediation
-Rebuilding from a fresh image is the safe answer. This board was cleaned in place, in two phases:
-
-1. **Read-only sweep:** brute-forced every PID to find hidden processes; located the implant's files **by name and indicator, not by timestamp**; listed every startup file that referenced it; checked package integrity (`dpkg --verify`), `ld.so.preload`, UID-0 accounts and SSH keys.
-2. **Cleanup:** backed up `/etc`, unmounted the `/proc` mask, killed both processes, **quarantined** all files into an archive (nothing deleted outright), unregistered `dns-udp4`, removed **only the injected lines** from the 44 init scripts (each re-validated with `bash -n`), reinstalled `procps`, then re-checked for respawn.
-
-Nothing respawned. Wazuh now watches `/etc/profile.d` and `/etc/init.d` in real time, so any reinfection would alert immediately.
-
-**A mistake worth noting:** the first cleanup approach selected files by the malware's timestamp. Because of the timestomping, it would have quarantined the genuine `ps`, `libprocps` and dpkg database files and broken the system. The read-only sweep caught this before anything was deleted.
+The board was **formatted and reinstalled from a fresh image**. A compromised system can't be trusted after cleaning, so nothing from the old install was kept. Wazuh now also watches `/etc/profile.d` and `/etc/init.d` in real time, so any reinfection on any board would alert immediately.
 
 ---
 
@@ -171,6 +164,5 @@ No Critical, High or Medium issues were found on the public IP in either run.
 1. **Deploy detection early.** The implant had been on the board for weeks, and the crashes I'd blamed on a dying SD card may well have been the malware. Rootcheck found it within two days.
 2. **"Probably a false positive" deserves five minutes of checking.** Hidden threads are usually benign. A thread whose leader can't be opened at all never is.
 3. **Don't trust file timestamps on a compromised host.** Find malware by indicators, not dates.
-4. **Do a read-only sweep before any destructive step.** It saved the system from my own first cleanup attempt.
-5. **The scanner and the SIEM tell one story.** The only Medium findings in the fleet were on the board that was already compromised, the one running the most extra services.
-6. **`autogroup:member` means *every* device on the account.** Write ACLs against explicit hosts or tags, and add `tests`.
+4. **The scanner and the SIEM tell one story.** The only Medium findings in the fleet were on the board that was already compromised, the one running the most extra services.
+5. **`autogroup:member` means *every* device on the account.** Write ACLs against explicit hosts or tags, and add `tests`.
