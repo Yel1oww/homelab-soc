@@ -3,7 +3,7 @@
 Security monitoring for a small fleet of always-on ARM single-board computers (**9 Orange Pi Zero 3 and 1 Raspberry Pi 4**), a home server, desktops and a cloud VPS, all connected over **Tailscale**.
 
 - **Wazuh 4.14** (SIEM / XDR): log collection, file integrity monitoring, rootkit detection, vulnerability detection and custom fleet rules
-- **Greenbone / OpenVAS** (vulnerability scanner): weekly network scans of the fleet over Tailscale, plus an internet-side scan of the VPS
+- **Greenbone / OpenVAS** (vulnerability scanner): weekly internet-side scan of the VPS public IP, plus a one-off audit of the whole fleet over Tailscale
 
 The most valuable outcome was not the setup itself. **Within two days, Wazuh caught a real, previously unnoticed malware implant** on one of the boards. This README focuses on what the two tools found and how each finding was handled.
 
@@ -25,9 +25,7 @@ flowchart LR
     V -- "Wazuh agent 1514/1515 only" --> X
     W -- agent --> X
     L -- agent --> X
-    X -- "OpenVAS scans (Tailscale IPs)" --> M
-    X -- "OpenVAS scans" --> V
-    X -. "OpenVAS scan of the PUBLIC IP<br/>(over the internet)" .-> V
+    X -. "Weekly OpenVAS scan of the PUBLIC IP<br/>(over the internet)" .-> V
 ```
 
 **Monitoring highlights**
@@ -129,14 +127,14 @@ While restricting agent traffic, I found that a rule granting `autogroup:member`
 
 ## OpenVAS / Greenbone findings
 
-Two weekly scans, both "Full and fast" across all TCP ports plus the top 100 UDP ports, throttled to 2 hosts at a time:
+Scans use "Full and fast" across all TCP ports plus the top 100 UDP ports.
 
-| Scan | Targets | Viewpoint |
-|---|---|---|
-| Fleet | 10 boards + VPS, Tailscale IPs | What any device on the tailnet can reach |
-| Public | VPS public IP | What the internet can reach |
+| Scan | Targets | Viewpoint | Frequency |
+|---|---|---|---|
+| Fleet audit | 10 boards + VPS, Tailscale IPs | What any device on the tailnet can reach | One-off (2 Oct 2026) |
+| Public | VPS public IP | What the internet can reach | **Weekly** |
 
-### Fleet scan over Tailscale (2 October 2026, 11 hosts)
+### Fleet audit over Tailscale (2 October 2026, 11 hosts, 2 at a time)
 
 | Severity | Count | Findings |
 |---|---|---|
@@ -155,7 +153,7 @@ Report filter: QoD ≥ 70, log-level results hidden.
 
 Nothing else turned up over Tailscale. The earning-app ports, node exporter and SSH on the boards produced no findings above Low.
 
-### VPS public IP, internet side
+### VPS public IP, internet side (weekly)
 
 | Scan | Findings | Notable |
 |---|---|---|
