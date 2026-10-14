@@ -113,13 +113,15 @@ The concealment is what gave it away. It hid its main process but not that proce
 |---|---|
 | `system.mark` and all 5 ELF copies | `184ed5d18d46304cda1017de0e9ac11c8ef1a25ade37de4c8f4dec4c33824be2` |
 | `gateway.sh` / `gateway.sh.bad` | `5a94bf6d46586246aa141fcbe06fc910203df1b0bb66280fc3852ecc062db690` |
-| `bash.cfg.sh` | `b08b0d0545730747…` (prefix) |
-| `dns-udp4` | `a3f7d4499b03a14f…` (prefix) |
-| `/.mod` | `503dffa20530956c…` (prefix) |
+| `bash.cfg.sh` | `b08b0d054573074796646937fe25499e9bd83a537fc94221c0c07702de618931` |
+| `dns-udp4` | `a3f7d4499b03a14ff2de76122b6a61c221151f59daa6a63a78ae5a805c95a482` |
+| `/.mod` | `503dffa20530956c5f61187e00935f20fe508c35dbb1fcf665b5d28d07d3d704` |
 
 Behavioural indicators: a user-space process with cmdline `[rcu_gp]` and a readable `/proc/<pid>/exe`; `tmpfs` mounted on `/proc/<pid>`; shell functions named `ps`/`ss`/`netstat` in `/etc/profile.d/`.
 
-No public match was found for the main hash at the time of writing. The family was identified from the file paths and behaviour instead (see above).
+When first investigated, the main hash had no public match, so the family was identified from the file paths and behaviour (see above). The quarantined samples were later **submitted to VirusTotal**, where `system.mark` (`184ed5d1…24be2`) is detected by **31 engines**. A community comment there documents the paths, persistence and evasion techniques above.
+
+🔗 [VirusTotal report](https://www.virustotal.com/gui/file/184ed5d18d46304cda1017de0e9ac11c8ef1a25ade37de4c8f4dec4c33824be2)
 
 ### Remediation
 The board was **formatted and reinstalled from a fresh image**. A compromised system can't be trusted after cleaning, so nothing from the old install was kept. Wazuh now also watches `/etc/profile.d` and `/etc/init.d` in real time, so any reinfection on any board would alert immediately.
