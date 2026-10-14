@@ -5,7 +5,7 @@ Security monitoring for a small fleet of always-on ARM single-board computers (*
 - **Wazuh 4.14** (SIEM / XDR): log collection, file integrity monitoring, rootkit detection, vulnerability detection and custom fleet rules
 - **Greenbone / OpenVAS** (vulnerability scanner): weekly internet-side scan of the VPS public IP, plus a one-off audit of the whole fleet over Tailscale
 
-The most valuable outcome was not the setup itself. **Within two days, Wazuh caught a real, previously unnoticed malware implant** on one of the boards. This README focuses on what the two tools found and how each finding was handled.
+The most valuable outcome was not the setup itself. **Within two days, Wazuh caught a real, previously unnoticed malware implant** on one of the boards: a node of the **Kaiji (Chaos) DDoS/proxy botnet**. This README focuses on what the two tools found and how each finding was handled.
 
 ---
 
@@ -84,7 +84,29 @@ The hide-list inside `gateway.sh` gave away the rest of the implant:
 | `/etc/rc.local` (2 lines) | persistence | Runs `netstat.cfg` |
 | `/.mod` | 27-byte script | Unpackaged file in `/`, matching the hide-list pattern |
 
-**Timestomping:** all the binaries carried the timestamp `2023-10-31 11:36:04`, the exact build time of the genuine Ubuntu `procps` package (`ps`, `kill`, `sysctl`). An identical, clean `procps` inside a Docker image layer confirmed this. The malware copied the timestamps of real system tools to blend in, so file dates can't tell when it arrived. The first reliable date is a rewrite of `gateway.sh` at a boot on 2026-09-23. The infection vector is unknown. No foreign logins appeared in `wtmp`, but a compromised host's records can't be fully trusted.
+**Timestomping:** all the binaries carried the timestamp `2023-10-31 11:36:04`, the exact build time of the genuine Ubuntu `procps` package (`ps`, `kill`, `sysctl`). An identical, clean `procps` inside a Docker image layer confirmed this. The malware copied the timestamps of real system tools to blend in, so file dates can't tell when it arrived. The first reliable date is a rewrite of `gateway.sh` at a boot on 2026-09-23.
+
+### Identification: Kaiji / Chaos botnet
+The file hash had no public match, but the artifact set is a fingerprint. `/usr/lib/libgdi.so.0.8.2`, `/boot/system.pub`, `/etc/init.d/dns-udp4`, `/.mod`, `/etc/profile.d/bash.cfg(.sh)`, `gateway.sh` and `system.mark` match published analyses of **Kaiji**, a Go-based Linux botnet (recent builds are also tracked as **Chaos**), file for file. This sample was an ARM64 build.
+
+**What it was for.** Kaiji turns the machines it infects into remotely controlled bots. It has two jobs:
+- **DDoS for hire.** More than 24 attack methods (TCP, UDP, TLS and WebSocket floods, raw packets). The board was one of many machines whose bandwidth was used to knock targets offline.
+- **Proxy node.** An embedded SOCKS5/HTTP proxy that relays other people's traffic, so their activity appears to come from a residential home IP.
+
+It is not built to steal data. Its value to the attacker is the board's CPU, bandwidth and clean IP address. That workload is a likely explanation for the instability and memory pressure `mini-casa` had shown for weeks.
+
+**How it behaved.**
+
+| Tactic | What it did |
+|---|---|
+| **Persistence and redundancy** | 6 identical copies, each started independently: an init script (`dns-udp4`), `rc.local`, a login hook (`bash.cfg.sh`), `/.mod`, and lines injected into 44 `/etc/init.d` scripts so that starting almost any service relaunched it. Removing one copy achieved nothing. Another copy would bring it back. |
+| **Disguise** | Process name set to `[rcu_gp]`, which looks like a kernel thread. Copies named like a library (`libgdi.so`), key files (`system.pub`) or config files (`netstat.cfg`, `bash.cfg`). |
+| **Concealment** | A `tmpfs` mounted over its own `/proc/<pid>` so tools reading `/proc` saw an empty directory, plus `ps`/`ss`/`netstat` shell wrappers in `/etc/profile.d` that removed its names from the output. |
+| **Anti-forensics** | Timestamps copied from the genuine `procps` package, so file dates were useless for finding or dating it. |
+
+No kernel module was involved (user-space only), and no C2 connection was active at inspection time. Kaiji's command channel is mostly idle between orders.
+
+The concealment is what gave it away. It hid its main process but not that process's threads, and Wazuh rootcheck flagged that inconsistency.
 
 ### Indicators of compromise
 | File | SHA-256 |
@@ -97,7 +119,7 @@ The hide-list inside `gateway.sh` gave away the rest of the implant:
 
 Behavioural indicators: a user-space process with cmdline `[rcu_gp]` and a readable `/proc/<pid>/exe`; `tmpfs` mounted on `/proc/<pid>`; shell functions named `ps`/`ss`/`netstat` in `/etc/profile.d/`.
 
-No public match was found for the main hash at the time of writing.
+No public match was found for the main hash at the time of writing. The family was identified from the file paths and behaviour instead (see above).
 
 ### Remediation
 The board was **formatted and reinstalled from a fresh image**. A compromised system can't be trusted after cleaning, so nothing from the old install was kept. Wazuh now also watches `/etc/profile.d` and `/etc/init.d` in real time, so any reinfection on any board would alert immediately.
@@ -111,12 +133,6 @@ The board was **formatted and reinstalled from a fresh image**. A compromised sy
 | Rootcheck *"Files hidden inside `/tmp/RustDesk`"* (level 11) on the home server | A stale **FUSE mount** (RustDesk clipboard transfer): "Transport endpoint is not connected" | **False positive.** Unmounted, plus a level-0 rule for that path |
 | Windows agent **disconnected** for 24h | A Windows "debloat" tweak had **disabled the IP Helper service (`iphlpsvc`)**, which Tailscale depends on | Service re-enabled; agent back online |
 | Docker container events | Far too noisy on boards running many containers | Collection removed fleet-wide, plus a level-0 rule on group `docker` |
-
-## Finding: Tailscale ACL hole
-
-While restricting agent traffic, I found that a rule granting `autogroup:member` access to the admin machines was far broader than intended. Every device is logged in with the same account, so `autogroup:member` included **all ten boards and the VPS**, giving each of them full access to the server and desktops. A compromised board (like `mini-casa`) could have reached everything.
-
-**Fix:** explicit host lists. Boards and the VPS may reach **only** the Wazuh ports (`1514/1515`) on the server, and nothing else, including each other. ACL `tests` enforce this, so the policy refuses to save if a board can reach SSH, the dashboard or another board.
 
 ---
 
@@ -159,6 +175,17 @@ Nothing else turned up over Tailscale. The services and SSH on the boards produc
 
 No Critical, High or Medium issues were found on the public IP in either run.
 
+### The vulnerabilities explained
+
+**Pi-hole `.git` folder exposed (Medium).** The Pi-hole web root served its own `.git` directory over HTTP and HTTPS. Anyone who could reach the board could download the repository metadata: version history, update times and the hostname. This isn't a way in by itself. It is reconnaissance: an attacker learns the exact software version and can match it to known exploits. *Fix:* access to `.git` is blocked, and the board itself has since been rebuilt.
+
+**Weak SSH MAC algorithms on the VPS (Low).** SSH protects every packet with a MAC, a short tag that proves the packet wasn't altered. `umac-64` produces 64-bit tags, which are short by modern standards and in theory easier to forge. The practical risk is small, but this SSH port faces the whole internet, so it was worth hardening. *Fix:* only strong MACs are offered now (`hmac-sha2-256/512-etm`, `umac-128-etm`). The next public scan no longer flagged it.
+
+**TCP and ICMP timestamps (Low, all hosts).** Hosts answered ICMP timestamp requests, and TCP packets carried a running timestamp counter. Together they let anyone estimate a machine's clock and uptime. Long uptime is a hint that kernel patches haven't been applied, and the data also helps fingerprint hosts. *Fix:* ICMP timestamp replies are dropped and TCP timestamps are disabled where the scanner flagged them.
+
+### Hardening: automatic security updates
+Nothing on the boards or the server was installing security updates on its own. Unpatched, always-on devices are what botnets like Kaiji look for. All ten boards and the home server now run **weekly unattended security upgrades** on a Sunday schedule. On DietPi this meant unmasking the APT timers that DietPi disables by default and repairing interrupted `dpkg` states. Each upgrade runs as a detached job, so an upgrade of Tailscale itself can't cut the session off mid-update.
+
 ---
 
 ## Lessons learned
@@ -167,4 +194,4 @@ No Critical, High or Medium issues were found on the public IP in either run.
 2. **"Probably a false positive" deserves five minutes of checking.** Hidden threads are usually benign. A thread whose leader can't be opened at all never is.
 3. **Don't trust file timestamps on a compromised host.** Find malware by indicators, not dates.
 4. **The scanner and the SIEM tell one story.** The only Medium findings in the fleet were on the board that was already compromised, the one running the most extra services.
-5. **`autogroup:member` means *every* device on the account.** Write ACLs against explicit hosts or tags, and add `tests`.
+5. **Stealth creates its own signals.** Kaiji's hiding tricks (a mount over `/proc`, a fake kernel-thread name, shell-function wrappers) are exactly the kind of anomalies a host-based detector is designed to notice.
