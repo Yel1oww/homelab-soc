@@ -15,7 +15,7 @@ The most valuable outcome was not the setup itself. **Within two days, Wazuh cau
 flowchart LR
     subgraph Tailnet["Tailscale tailnet (WireGuard)"]
         direction LR
-        X["Home server (Ubuntu 24.04)<br/>Wazuh manager + indexer + dashboard<br/>Greenbone / OpenVAS (Docker)<br/>Pi-hole"]
+        X["Home server (Ubuntu 24.04)<br/>Wazuh manager<br/>Greenbone / OpenVAS (Docker)<br/>Pi-hole"]
         M["10 mini PCs<br/>9x Orange Pi Zero 3 + 1x Raspberry Pi 4<br/>Ubuntu + DietPi"]
         V["Cloud VPS (Ubuntu)"]
         W["Windows desktop"]
