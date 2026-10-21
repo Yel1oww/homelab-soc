@@ -4,8 +4,9 @@ Security monitoring for a small fleet of always-on ARM single-board computers (*
 
 - **Wazuh 4.14** (SIEM / XDR): log collection, file integrity monitoring, rootkit detection, vulnerability detection and custom fleet rules
 - **Greenbone / OpenVAS** (vulnerability scanner): weekly internet-side scan of the VPS public IP, plus a one-off audit of the whole fleet over Tailscale
+- **Wazuh Tickets** (built for this lab): a self-hosted ticket queue that turns Wazuh alerts into prioritised tickets, keeps a searchable history of every investigation, and pings **Discord** when something new needs attention
 
-The most valuable outcome was not the setup itself. **Within two days, Wazuh caught a real, previously unnoticed malware implant** on one of the boards: a node of the **Kaiji (Chaos) DDoS/proxy botnet**. This README focuses on what the two tools found and how each finding was handled.
+The most valuable outcome was not the setup itself. **Within two days, Wazuh caught a real, previously unnoticed malware implant** on one of the boards: a node of the **Kaiji (Chaos) DDoS/proxy botnet**. This README focuses on what the tools found and how each finding was handled.
 
 ---
 
@@ -15,12 +16,13 @@ The most valuable outcome was not the setup itself. **Within two days, Wazuh cau
 flowchart LR
     subgraph Tailnet["Tailscale tailnet (WireGuard)"]
         direction LR
-        X["Home server (Ubuntu 24.04)<br/>Wazuh manager<br/>Greenbone / OpenVAS (Docker)<br/>Pi-hole"]
+        X["Home server (Ubuntu 24.04)<br/>Wazuh manager<br/>Wazuh Tickets (Docker)<br/>Greenbone / OpenVAS (Docker)<br/>Pi-hole"]
         M["10 mini PCs<br/>9x Orange Pi Zero 3 + 1x Raspberry Pi 4<br/>Ubuntu + DietPi"]
         V["Cloud VPS (Ubuntu)"]
         W["Windows desktop"]
         L["Arch-based laptops"]
     end
+    D["Discord"]
     M -- "Wazuh agent 1514/1515 only" --> X
     V -- "Wazuh agent 1514/1515 only" --> X
     W -- agent --> X
@@ -28,11 +30,13 @@ flowchart LR
     X -- "OpenVAS fleet audit (Tailscale IPs)" --> M
     X -- "OpenVAS fleet audit" --> V
     X -. "Weekly OpenVAS scan of the PUBLIC IP<br/>(over the internet)" .-> V
+    X -. "New / escalated tickets" .-> D
 ```
 
 **Monitoring highlights**
 - **Logs survive reboots.** The boards keep `/var/log` in RAM, so logs used to vanish on every crash. Agents now read **journald** (warnings, errors, auth, sudo, cron, watchdog events) and ship it off the board immediately.
 - **SD-card-friendly scan intervals:** file integrity and inventory every 12h, CIS-style configuration assessment daily, a lighter rootcheck, and real-time file integrity on `.ssh/`, `/etc/profile.d` and `/etc/init.d`.
+- **Alerts become tickets.** Everything at level 7+ from all 13 agents lands in a triage queue instead of a dashboard. See [Alert triage: Wazuh Tickets](#alert-triage-wazuh-tickets).
 - **Custom rules** for this fleet:
 
 | Rule | Level | Detects |
@@ -40,6 +44,7 @@ flowchart LR
 | 100100–100103 | 3–10 | Network watchdog restarting interfaces, reloading the WiFi driver, or forcing a reboot |
 | 100110 | 12 | SD card / ext4 I/O errors (dying cards) |
 | 100120 | 10 | Any filesystem at 90%+ |
+| 100121 | 0 | Child of 100120: ignores read-only snap `squashfs` loop mounts, which always report 100% |
 | 100130–100135 | 3–10 | WiFi disconnects and auth failures; **WiFi flapping** (5+ drops in 10 min) |
 | built-in 533 | 7 | A listening TCP port opened or closed |
 
@@ -128,6 +133,65 @@ The board was **formatted and reinstalled from a fresh image**. A compromised sy
 
 ---
 
+## Alert triage: Wazuh Tickets
+
+With 13 agents, the Wazuh dashboard fills up with routine events: file checksum changes, compliance results, port changes, scanner noise. It is good for exploring data but bad at answering *"what do I need to look at right now, and what did I already check?"* The Kaiji alert showed that the one alert that matters can look exactly like a routine false positive.
+
+So I built **Wazuh Tickets**, a small self-hosted ticketing app that sits next to the Wazuh manager and turns alerts into a work queue.
+
+### How it works
+
+```mermaid
+flowchart LR
+    A["13 Wazuh agents"] --> M["wazuh-manager"]
+    M -- "custom integration<br/>(level ≥ 7, JSON)" --> T["Wazuh Tickets<br/>FastAPI + SQLite<br/>(Docker)"]
+    T -- "suppressed rule?" --> X["dropped<br/>(hit counter)"]
+    T -- "open ticket for same<br/>rule + agent?" --> G["grouped<br/>(hit count +1)"]
+    T -- "otherwise" --> N["new ticket"]
+    N -- "webhook" --> D["Discord"]
+    G -. "only if priority escalates" .-> D
+```
+
+- **Ingestion.** A Wazuh `custom-` integration (a short Python script that uses only the standard library and runs on Wazuh's bundled interpreter) POSTs every alert at level 7 or higher to the app, authenticated with a bearer token.
+- **Grouping.** Repeat alerts for the same **rule + agent** fold into the one open ticket and increment its hit counter. Brute-force bursts and noisy rules create one ticket, not hundreds.
+- **Priority** comes from the rule level: 12+ critical, 10–11 high, 7–9 medium. The queue is sorted by priority. If a higher-level alert lands on an open ticket, it is **escalated** and Discord is notified again.
+- **Discord.** Each new ticket posts an embed coloured by priority, with agent, rule, MITRE technique and a link to the ticket. Critical tickets can @mention me.
+
+### Features
+
+| Area | What it does |
+|---|---|
+| **Queue** | Open tickets sorted by priority, with "start working", bulk-close and live counters per priority |
+| **Investigation** | Each ticket shows the agent, rule, MITRE mapping, the last 100 raw events with their logs, the full alert JSON, and links to earlier tickets for the same rule and agent |
+| **Indicators** | IPs, users, files, commands and hashes are extracted from the alerts automatically. Each one links to a search across all tickets, and public IPs and hashes get AbuseIPDB / VirusTotal links |
+| **Search** | Searches titles, notes **and the raw alert JSON**, so an IP, username, file path or hash finds every ticket it ever appeared in. Matches are highlighted and listed first |
+| **Closing** | Resolution (Resolved / False positive / Duplicate / Accepted risk) plus a note on what was found and done, so the history doubles as an investigation log |
+| **Suppression** | Optional when closing: mute the rule on that agent or everywhere, for 24h / 7d / 30d / forever. Dropped alerts are still counted, and suppressions can be removed at any time |
+| **History & export** | Closed tickets filterable by period, resolution, agent and priority, with time-to-close and CSV export |
+| **Insights** | Tickets per day, noisiest rules with their false-positive rate, tickets per agent, storage use |
+| **Homepage widget** | A read-only `/api/stats` endpoint feeds live open-ticket counts into the lab's Homepage dashboard |
+
+**Footprint:** one container (145 MB image) and a SQLite file of a few MB. At most 100 raw alerts are kept per ticket, and tickets closed more than 90 days ago are trimmed to a single sample alert. Tickets and notes are kept forever.
+
+### The first days
+
+Within about **36 hours** of going live, the queue had absorbed **461 alerts from 13 agents into 44 tickets** (roughly 10 alerts per ticket). Every one was triaged and closed: about **70% as false positives**, the rest as accepted risk or resolved. That noise is exactly what used to bury real findings, and working through it drove a round of tuning:
+
+| Ticket | Root cause | Outcome |
+|---|---|---|
+| **Filesystem at 90%+** (custom rule 100120) on the VPS, 22 hits | Every hit was a **snap `squashfs` loop mount** (`/snap/core22`, `/snap/certbot`…). These are read-only images and always report 100%. The real disk was at 61% | **False positive.** Level-0 child rule **100121** matches `/dev/loopN … /snap/` only, so real disks still alert fleet-wide. No snap alerts since |
+| **sshd: possible attack** (rule 5701) on the VPS | Internet scanners sending `GET /` and `GET /favicon.ico` to port 22 to fingerprint the service. No login attempts | **False positive.** It prompted a review of the VPS's SSH exposure: root login disabled, fail2ban and ufw active |
+| **Listened ports changed** (rule 533) on the home server | The diff was exactly the new ticket app's own port | **Resolved.** The rule is deliberately kept: a new unknown listener is a classic backdoor signal |
+| **CIS benchmark score below 50%** (rule 19004) | Summary of the daily configuration assessment. Not an incident, and it re-fires on every scan | **Accepted risk**, suppressed. Individual failed checks still raise their own tickets |
+| **SCA: "sshd MACs" passed → failed** (rule 19011) | `sshd_config` was untouched. The flip followed an automatic `openssh-server` update | Not an incident. SSH on the home server is only reachable from the LAN and the tailnet |
+| **File integrity: checksum changed / file deleted** (rules 550 / 553) | Routine changes from legitimate software on the boards: EarnApp, CUPS and Navidrome updating their own files | **False positive** |
+
+### Why build it instead of using an existing tool?
+
+Full platforms such as TheHive or DFIR-IRIS do far more, but they are heavy for a homelab and assume a team. The goal here was narrower: **one person, one queue, nothing lost.** The integration script is about 20 lines and the app is a single FastAPI service with SQLite, so it fits on the same box as the Wazuh manager. The core idea (group by rule + agent, prioritise by level, record why each ticket was closed) is what makes the noise manageable.
+
+---
+
 ## Other Wazuh findings
 
 | Alert / symptom | Root cause | Outcome |
@@ -135,6 +199,7 @@ The board was **formatted and reinstalled from a fresh image**. A compromised sy
 | Rootcheck *"Files hidden inside `/tmp/RustDesk`"* (level 11) on the home server | A stale **FUSE mount** (RustDesk clipboard transfer): "Transport endpoint is not connected" | **False positive.** Unmounted, plus a level-0 rule for that path |
 | Windows agent **disconnected** for 24h | A Windows "debloat" tweak had **disabled the IP Helper service (`iphlpsvc`)**, which Tailscale depends on | Service re-enabled; agent back online |
 | Docker container events | Far too noisy on boards running many containers | Collection removed fleet-wide, plus a level-0 rule on group `docker` |
+| *"Filesystem at 90%+"* on the VPS | Read-only snap `squashfs` mounts always report 100% | **False positive.** Level-0 child rule 100121 for snap loop mounts only |
 
 ---
 
@@ -197,3 +262,4 @@ Nothing on the boards or the server was installing security updates on its own. 
 3. **Don't trust file timestamps on a compromised host.** Find malware by indicators, not dates.
 4. **The scanner and the SIEM tell one story.** The only Medium findings in the fleet were on the board that was already compromised, the one running the most extra services.
 5. **Stealth creates its own signals.** Kaiji's hiding tricks (a mount over `/proc`, a fake kernel-thread name, shell-function wrappers) are exactly the kind of anomalies a host-based detector is designed to notice.
+6. **Detection is only half the job. Triage is the bottleneck.** A SIEM that produces hundreds of alerts a day hides the one that matters. Grouping repeats, sorting by priority and writing down *why* each alert was dismissed turned a noisy dashboard into a queue that gets emptied, and every false positive closed became a tuning rule instead of a recurring distraction.
